@@ -41,18 +41,8 @@ struct stun_xor_addr_msg {
     struct stun_xor_mapped_addr_attr attr;
 };
 
-int main() {
+uint16_t stun_get_external_port(int udp_sock) {
     int r;
-    int s = socket(AF_INET, SOCK_DGRAM, 0);
-
-    struct sockaddr_in sin = {
-        .sin_addr.s_addr = INADDR_ANY,
-        .sin_port = 0,
-        .sin_family = AF_INET
-    };
-
-    r = bind(s, (const struct sockaddr *)&sin, sizeof(sin));
-
     struct addrinfo hints = {
         .ai_family = AF_INET,
         .ai_socktype = SOCK_DGRAM,
@@ -62,11 +52,8 @@ int main() {
     struct addrinfo *res;
     r = getaddrinfo("stun.cloudflare.com", NULL, &hints, &res);
     if (r) {
-        errx(1, "getaddinfo");
+        return -1;
     }
-
-    sin.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
-    sin.sin_port = htons(3478);
 
     struct stun_bind_req_msg msg = {
         .hdr = {
@@ -85,15 +72,19 @@ int main() {
     read(rng, &msg.hdr.tid, sizeof(msg.hdr.tid));
     close(rng);
 
-    sendto(s, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));
+    struct sockaddr_in sin = {
+        .sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr,
+        .sin_port = htons(3478),
+        .sin_family = AF_INET
+    };
+    sendto(udp_sock, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));
 
     struct stun_xor_addr_msg msg_resp;
-    read(s, &msg_resp, sizeof(msg_resp));
+    read(udp_sock, &msg_resp, sizeof(msg_resp));
 
     if (ntohs(msg_resp.attr.type) != 0x0020) {
         return -1;
     }
     uint16_t port = ntohs(msg_resp.attr.port_xor) ^ 0x2112;
-    printf("Port: %d\n", port);
-    return 0;
+    return port;
 }

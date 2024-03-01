@@ -11,29 +11,18 @@
 #include <err.h>
 
 #include "user_data.h"
+#include "imap.h"
 
 #define TAG "a001"
-
-enum state {
-    UNAUTH, CHECK_MAIL, LISTEN, FETCH, SEND, EXIT
-};
 
 enum result {
     OK, BAD
 };
 
-struct data {
-    BIO *web;
-    const char *tag;
-    int msgid;
-    bool message_pending;
-    int port;
-};
-
-typedef void (*scanner)(char *, struct data *);
+typedef void (*scanner)(char *, struct imap_session *);
 
 #define UNSEEN_TAG "UNSEEN"
-void scan_unseen(char *line, struct data *data) {
+void scan_unseen(char *line, struct imap_session *data) {
     char *r = strstr(line, UNSEEN_TAG);
     if (r) {
         int id = atoi(r + sizeof(UNSEEN_TAG));
@@ -43,34 +32,53 @@ void scan_unseen(char *line, struct data *data) {
     }
 }
 
-#define RECENT_TAG "RECENT"
-void scan_recent(char *line, struct data *data) {
+#define RECENT_TAG "EXISTS"
+void scan_recent(char *line, struct imap_session *data) {
     if (strstr(line, RECENT_TAG)) {
         data->message_pending = true;
     }
 }
 
 #define SUBJECT_TAG "Subject:"
-void scan_subject(char *line, struct data *data) {
+void scan_subject(char *line, struct imap_session *data) {
     if (strncmp(line, SUBJECT_TAG, sizeof(SUBJECT_TAG) - 1) == 0) {
-        int port = atoi(line + sizeof(SUBJECT_TAG) - 1);
-        if (port != 0) {
-            data->port = port;
+        line += sizeof(SUBJECT_TAG);
+        if (data->mode == SERVER && *line == 'c' || data->mode == CLIENT && *line == 's') {
+            int port = atoi(line + 2);
+            printf("DATA: %s\n", line+2);
+            if (port != 0) {
+                data->message = port;
+            }
+        } else {
+            printf("ERR DATA START: %c\n", *line);
         }
     }
 }
 
-int imap_write(struct data *data, const char *msg) {
+int imap_write(struct imap_session *data, const char *msg) {
     data->tag = TAG;
     fprintf(stderr, "C: %s %s\r\n", data->tag, msg);
     return BIO_printf(data->web, "%s %s\r\n", data->tag, msg);
 }
 
-enum result imap_read(struct data *data, scanner scanner) {
+int IMAP_get_line(BIO *web, char *buf, int n) {
+    int r;
+    char *buf0 = buf;
+    while(buf - buf0 < n) {
+        r = BIO_read(web, buf, 1);
+        if (r < 0) return r;
+        if (*buf == '\n') break;
+        buf++;
+    }
+    *(++buf) = 0;
+    return buf - buf0;
+}
+
+enum result imap_read(struct imap_session *data, scanner scanner) {
     static char line[256];
     int r;
     do {
-        r = BIO_get_line(data->web, line, sizeof(line));
+        r = IMAP_get_line(data->web, line, sizeof(line));
         if (scanner && data) {
             scanner(line, data);
         }
@@ -90,39 +98,12 @@ enum result imap_read(struct data *data, scanner scanner) {
     return BAD;
 }
 
-enum result imap_cmd(struct data *data, const char *msg) {
+enum result imap_cmd(struct imap_session *data, const char *msg) {
     imap_write(data, msg);
     return imap_read(data, NULL);
 }
 
-enum mode {
-    EMPTY, CLIENT, SERVER
-};
-
-int main(int argc, char *argv[]) {
-    enum mode mode = EMPTY;
-    int send_data = 0;
-    char c;
-    while ((c = getopt(argc, argv, "c:s")) != -1) {
-        switch (c) {
-            case 'c':
-                mode = CLIENT;
-                send_data = atoi(optarg);
-                if (!send_data) {
-                    errx(1, "Invalid data");
-                }
-                break;
-            case 's':
-                mode = SERVER;
-                break;
-        }
-    }
-
-    if (mode == EMPTY) {
-        fprintf(stderr, "No mode given");
-        return 1;
-    }
-
+int imap_create_session(struct imap_session *session) {
     SSL_library_init();
     SSL_load_error_strings();
 
@@ -135,88 +116,88 @@ int main(int argc, char *argv[]) {
     BIO_do_connect(web);
     BIO_do_handshake(web);
 
-    enum state state = UNAUTH;
+    session->web = web;
+    session->ssl_ctx = ctx;
+    session->tag = "*";
+    session->msgid = 0;
+    session->message = 0;
+    session->state = UNAUTH;
 
-    struct data data = {
-        .web = web,
-        .tag = "*",
-        .msgid = 0,
-        .port = 0
-    };
-    imap_read(&data, NULL);
-    while(state != EXIT) {
-        switch (state) {
-        case UNAUTH:
-            imap_write(&data, "login " IMAP_CREDS);
-            if (imap_read(&data, NULL) != OK)
-                goto error;
+    imap_read(session, NULL);
+    imap_write(session, "login " IMAP_CREDS);
+    if (imap_read(session, NULL) != OK)
+        return 1;
+    session->state = AUTH;
+    return 0;
+}
 
-            state = mode == SERVER ? CHECK_MAIL : SEND;
-            break;
-        case CHECK_MAIL:
-            imap_write(&data, "select xd");
-            if (imap_read(&data, scan_unseen) != OK)
+int imap_close_session(struct imap_session *session) {
+    BIO_free_all(session->web);
+    SSL_CTX_free(session->ssl_ctx);
+    return 0;
+}
+
+int imap_wait_msg(struct imap_session *session) {
+    while (1) {
+        switch (session->state) {
+        case AUTH:
+            imap_write(session, "select xd");
+            if (imap_read(session, scan_unseen) != OK)
                 goto error;
-            state = data.msgid ? FETCH : LISTEN;
+            session->state = session->msgid ? FETCH : LISTEN;
             break;
         case LISTEN:
-            sleep(1);
-            imap_write(&data, "noop");
-            if (imap_read(&data, scan_recent) != OK)
+            sleep(5);
+            imap_write(session, "noop");
+            if (imap_read(session, scan_recent) != OK)
                 goto error;
-            if (data.message_pending) {
-                state = CHECK_MAIL;
+            if (session->message_pending) {
+                session->state = AUTH;
             }
             break;
         case FETCH: {
             char cmd[64];
-            sprintf(cmd, "fetch %d (BODY[HEADER.FIELDS (Subject)])", data.msgid);
-            imap_write(&data, cmd);
-            if (imap_read(&data, scan_subject) != OK)
+            sprintf(cmd, "fetch %d (BODY.PEEK[HEADER.FIELDS (Subject)])",
+                    session->msgid);
+            imap_write(session, cmd);
+            if (imap_read(session, scan_subject) != OK)
                 goto error;
-            sprintf(cmd, "store %d +flags /Deleted", data.msgid);
-            if (imap_cmd(&data, cmd) != OK)
+            if (!session->message) {
+                session->state = LISTEN;
+                continue;
+            }
+            sprintf(cmd, "store %d +flags \\Deleted", session->msgid);
+            if (imap_cmd(session, cmd) != OK)
                 goto error;
-            if (imap_cmd(&data, "expunge") != OK)
+            if (imap_cmd(session, "expunge") != OK)
                 goto error;
-            data.msgid = 0;
-            state = data.port ? EXIT : LISTEN;
-            break;
-        }
-        case SEND: {
-            char msg[64];
-            char cmd[64];
-            sprintf(msg, "Subject: %d\r\n\r\n", send_data);
-            int mlen = strlen(msg);
-            sprintf(cmd, "append xd {%d}", mlen - 4);
-            if (imap_cmd(&data, cmd) != OK)
-                goto error;
-            BIO_write(data.web, msg, mlen);
-            if (imap_read(&data, NULL) != OK)
-                goto error;
-            state = EXIT;
+            session->msgid = 0;
+            if (session->message) {
+                goto success;
+            }
             break;
         }
         default:
-            state = EXIT;
-            break;
+            errx(1, "Invalid IMAP state");
         }
+        sleep(1);
     }
-    endloop:
-
-    if (mode == SERVER) {
-        printf("Got port %d\n", data.port);
-    } else {
-        printf("Sent port %d\n", send_data);
-    }
-
-    goto free;
     error:
-    fputs("Exit due to error", stderr);
+    return -1;
+    success:
+    return session->message;
+}
 
-    free:
-    BIO_free_all(web);
-    SSL_CTX_free(ctx);
-
+int imap_send_msg(struct imap_session *session, int send_msg) {
+    char msg[64];
+    char cmd[64];
+    sprintf(msg, "Subject: %c:%d\r\n\r\n\r\n", session->mode == SERVER ? 's' : 'c', send_msg);
+    int mlen = strlen(msg);
+    sprintf(cmd, "append xd {%d}", mlen - 4);
+    if (imap_cmd(session, cmd) != OK)
+        return 1;
+    BIO_write(session->web, msg, mlen);
+    if (imap_read(session, NULL) != OK)
+        return 1;
     return 0;
 }
