@@ -12,6 +12,7 @@
 
 #include "user_data.h"
 #include "imap.h"
+#include "b64.h"
 
 #define TAG "a001"
 
@@ -44,21 +45,26 @@ void scan_subject(char *line, struct imap_session *data) {
     if (strncmp(line, SUBJECT_TAG, sizeof(SUBJECT_TAG) - 1) == 0) {
         line += sizeof(SUBJECT_TAG);
         if (data->mode == SERVER && *line == 'c' || data->mode == CLIENT && *line == 's') {
-            int port = atoi(line + 2);
-            printf("DATA: %s\n", line+2);
-            if (port != 0) {
-                data->message = port;
-            }
+            strtok(line, ":\r\n");
+            char *msg_enc = strtok(NULL, ":\r\n");
+            printf("DATA: %s\n", msg_enc);
+            data->msg_len = b64decode(msg_enc, strlen(msg_enc), data->msg_buf);
         } else {
             printf("ERR DATA START: %c\n", *line);
         }
     }
 }
 
+int imap_write_raw(struct imap_session *data, const char *raw_data, int n) {
+    fprintf(stderr, "C: %s", raw_data);
+    return BIO_write(data->web, raw_data, n);
+}
+
 int imap_write(struct imap_session *data, const char *msg) {
+    char buf[256];
     data->tag = TAG;
-    fprintf(stderr, "C: %s %s\r\n", data->tag, msg);
-    return BIO_printf(data->web, "%s %s\r\n", data->tag, msg);
+    int n = sprintf(buf, "%s %s\r\n", data->tag, msg);
+    return imap_write_raw(data, buf, n);
 }
 
 int IMAP_get_line(BIO *web, char *buf, int n) {
@@ -79,11 +85,11 @@ enum result imap_read(struct imap_session *data, scanner scanner) {
     int r;
     do {
         r = IMAP_get_line(data->web, line, sizeof(line));
-        if (scanner && data) {
-            scanner(line, data);
-        }
         if (r > 0) {
             fprintf(stderr, "S: %s", line);
+            if (scanner && data) {
+                scanner(line, data);
+            }
             if (!strncmp(line, data->tag, strlen(data->tag)) || *line == '+') {
                 break;
             }
@@ -120,7 +126,7 @@ int imap_create_session(struct imap_session *session) {
     session->ssl_ctx = ctx;
     session->tag = "*";
     session->msgid = 0;
-    session->message = 0;
+    session->msg_buf = 0;
     session->state = UNAUTH;
 
     imap_read(session, NULL);
@@ -137,7 +143,9 @@ int imap_close_session(struct imap_session *session) {
     return 0;
 }
 
-int imap_wait_msg(struct imap_session *session) {
+int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len) {
+    session->msg_buf = out_msg;
+    session->msg_len = 0;
     while (1) {
         switch (session->state) {
         case AUTH:
@@ -162,7 +170,7 @@ int imap_wait_msg(struct imap_session *session) {
             imap_write(session, cmd);
             if (imap_read(session, scan_subject) != OK)
                 goto error;
-            if (!session->message) {
+            if (session->msg_len == 0) {
                 session->state = LISTEN;
                 continue;
             }
@@ -172,9 +180,7 @@ int imap_wait_msg(struct imap_session *session) {
             if (imap_cmd(session, "expunge") != OK)
                 goto error;
             session->msgid = 0;
-            if (session->message) {
-                goto success;
-            }
+            goto success;
             break;
         }
         default:
@@ -185,18 +191,21 @@ int imap_wait_msg(struct imap_session *session) {
     error:
     return -1;
     success:
-    return session->message;
+    return 0;
 }
 
-int imap_send_msg(struct imap_session *session, int send_msg) {
+int imap_send_msg(struct imap_session *session, void *send_msg, int send_len) {
     char msg[64];
     char cmd[64];
-    sprintf(msg, "Subject: %c:%d\r\n\r\n\r\n", session->mode == SERVER ? 's' : 'c', send_msg);
+    char buf[64];
+    int n = b64encode(send_msg, send_len, buf);
+    sprintf(msg, "Subject: %c:%.*s\r\n\r\n", session->mode == SERVER ? 's' : 'c', n, buf);
     int mlen = strlen(msg);
-    sprintf(cmd, "append xd {%d}", mlen - 4);
+    sprintf(cmd, "append xd {%d}", mlen - 2);
     if (imap_cmd(session, cmd) != OK)
         return 1;
-    BIO_write(session->web, msg, mlen);
+    // BIO_write(session->web, msg, mlen);
+    imap_write_raw(session, msg, mlen);
     if (imap_read(session, NULL) != OK)
         return 1;
     return 0;

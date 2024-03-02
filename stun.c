@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <fcntl.h>
 
+#include "stun.h"
+
 struct stun_hdr {
     uint16_t mtyp;
     uint16_t mlen;
@@ -28,7 +30,7 @@ struct stun_xor_mapped_addr_attr {
     uint8_t res;
     uint8_t proto;
     uint16_t port_xor;
-    uint16_t ip_xor;
+    uint32_t ip_xor;
 };
 
 struct stun_bind_req_msg {
@@ -41,7 +43,7 @@ struct stun_xor_addr_msg {
     struct stun_xor_mapped_addr_attr attr;
 };
 
-uint16_t stun_get_external_port(int udp_sock) {
+int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
     int r;
     struct addrinfo hints = {
         .ai_family = AF_INET,
@@ -83,8 +85,11 @@ uint16_t stun_get_external_port(int udp_sock) {
     read(udp_sock, &msg_resp, sizeof(msg_resp));
 
     if (ntohs(msg_resp.attr.type) != 0x0020) {
-        return -1;
+        return 0;
     }
-    uint16_t port = ntohs(msg_resp.attr.port_xor) ^ 0x2112;
-    return port;
+    printf("%x\n", msg_resp.attr.ip_xor);
+
+    out_addr->sin_port = msg_resp.attr.port_xor ^ htons(0x2112);
+    out_addr->sin_addr.s_addr = msg_resp.attr.ip_xor ^ htonl(0x2112a442);
+    return 0;
 }

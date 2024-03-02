@@ -17,12 +17,13 @@ struct imap_session {
     const char *tag;
     int msgid;
     bool message_pending;
-    int message;
+    void *msg_buf;
+    int msg_len;
     enum mode mode;
     enum state state;
 };
 
 int imap_create_session(struct imap_session *session);
-int imap_wait_msg(struct imap_session *session);
-int imap_send_msg(struct imap_session *session, int send_msg);
+int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len);
+int imap_send_msg(struct imap_session *session, void *send_msg, int send_len);
 int imap_close_session(struct imap_session *session);
