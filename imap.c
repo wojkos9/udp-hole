@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/socket.h>
-#include <openssl/tls1.h>
+#include <openssl/ssl.h>
 #include <stdbool.h>
 #include <getopt.h>
 #include <err.h>
@@ -81,7 +81,7 @@ int IMAP_get_line(BIO *web, char *buf, int n) {
 }
 
 enum result imap_read(struct imap_session *data, scanner scanner) {
-    static char line[256];
+    char line[256];
     int r;
     do {
         r = IMAP_get_line(data->web, line, sizeof(line));
@@ -113,7 +113,7 @@ int imap_create_session(struct imap_session *session) {
     SSL_library_init();
     SSL_load_error_strings();
 
-    const SSL_METHOD *method = TLS_method();
+    const SSL_METHOD *method = SSLv23_method();
     SSL_CTX *ctx = SSL_CTX_new(method);
 
     BIO *web = BIO_new_ssl_connect(ctx);
@@ -205,7 +205,6 @@ int imap_send_msg(struct imap_session *session, void *send_msg, int send_len) {
     sprintf(cmd, "append xd {%d}", mlen - 2);
     if (imap_cmd(session, cmd) != OK)
         return 1;
-    // BIO_write(session->web, msg, mlen);
     imap_write_raw(session, msg, mlen);
     if (imap_read(session, NULL) != OK)
         return 1;
