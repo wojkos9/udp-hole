@@ -48,7 +48,7 @@ void scan_subject(char *line, struct imap_session *data) {
             strtok(line, ":\r\n");
             char *msg_enc = strtok(NULL, ":\r\n");
             printf("DATA: %s\n", msg_enc);
-            data->msg_len = b64decode(msg_enc, strlen(msg_enc), data->msg_buf);
+            data->msg_len = b64decode(msg_enc, strlen(msg_enc), data->msg_buf, data->msg_buf_len);
         } else {
             printf("ERR DATA START: %c\n", *line);
         }
@@ -145,6 +145,7 @@ int imap_close_session(struct imap_session *session) {
 
 int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len) {
     session->msg_buf = out_msg;
+    session->msg_buf_len = out_len;
     session->msg_len = 0;
     while (1) {
         switch (session->state) {

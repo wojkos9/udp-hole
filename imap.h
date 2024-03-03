@@ -18,6 +18,7 @@ struct imap_session {
     int msgid;
     bool message_pending;
     void *msg_buf;
+    int msg_buf_len;
     int msg_len;
     enum mode mode;
     enum state state;
