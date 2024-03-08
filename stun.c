@@ -79,10 +79,14 @@ int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
         .sin_port = htons(3478),
         .sin_family = AF_INET
     };
-    sendto(udp_sock, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));
+    r = sendto(udp_sock, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));
+    if (r < 0) err(1, "send");
+    puts("sent");
 
     struct stun_xor_addr_msg msg_resp;
-    read(udp_sock, &msg_resp, sizeof(msg_resp));
+    r = read(udp_sock, &msg_resp, sizeof(msg_resp));
+    if (r < 0) err(1, "read");
+    puts("read");
 
     if (ntohs(msg_resp.attr.type) != 0x0020) {
         return 0;

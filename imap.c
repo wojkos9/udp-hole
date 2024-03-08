@@ -109,7 +109,10 @@ enum result imap_cmd(struct imap_session *data, const char *msg) {
     return imap_read(data, NULL);
 }
 
-int imap_create_session(struct imap_session *session) {
+int imap_create_session(void **_session, enum mode mode, char *mode_arg) {
+    struct imap_session *session = malloc(sizeof(struct imap_session));
+    *(struct imap_session **)_session = session;
+    session->mode = mode;
     SSL_library_init();
     SSL_load_error_strings();
 
@@ -137,13 +140,16 @@ int imap_create_session(struct imap_session *session) {
     return 0;
 }
 
-int imap_close_session(struct imap_session *session) {
+int imap_close_session(void *_session) {
+    struct imap_session *session = _session;
     BIO_free_all(session->web);
     SSL_CTX_free(session->ssl_ctx);
+    free(session);
     return 0;
 }
 
-int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len) {
+int imap_wait_msg(void *_session, void *out_msg, int out_len) {
+    struct imap_session *session = _session;
     session->msg_buf = out_msg;
     session->msg_buf_len = out_len;
     session->msg_len = 0;
@@ -195,7 +201,8 @@ int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len) {
     return 0;
 }
 
-int imap_send_msg(struct imap_session *session, void *send_msg, int send_len) {
+int imap_send_msg(void *_session, void *send_msg, int send_len) {
+    struct imap_session *session = _session;
     char msg[64];
     char cmd[64];
     char buf[64];

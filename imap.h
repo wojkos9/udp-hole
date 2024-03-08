@@ -3,12 +3,10 @@
 #include <stdbool.h>
 #include <openssl/ssl.h>
 
+#include "types.h"
+
 enum state {
     UNAUTH, AUTH, CHECK_MAIL, LISTEN, FETCH
-};
-
-enum mode {
-    EMPTY, CLIENT, SERVER
 };
 
 struct imap_session {
@@ -24,7 +22,7 @@ struct imap_session {
     enum state state;
 };
 
-int imap_create_session(struct imap_session *session);
-int imap_wait_msg(struct imap_session *session, void *out_msg, int out_len);
-int imap_send_msg(struct imap_session *session, void *send_msg, int send_len);
-int imap_close_session(struct imap_session *session);
+int imap_create_session(void **session, enum mode mode, char *mode_arg);
+int imap_wait_msg(void *session, void *out_msg, int out_len);
+int imap_send_msg(void *session, void *send_msg, int send_len);
+int imap_close_session(void *session);
