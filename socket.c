@@ -53,7 +53,10 @@ int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
         fprintf(stderr, "Connecting\n");
 
         r = connect(s, (struct sockaddr *)&sin, sizeof(sin));
-        if (r < 0) return -1;
+        if (r < 0) {
+            perror("connect");
+            return -1;
+        }
 
         fprintf(stderr, "Connected\n");
     }

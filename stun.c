@@ -43,6 +43,11 @@ struct stun_xor_addr_msg {
     struct stun_xor_mapped_addr_attr attr;
 };
 
+// const char *stun_host = "stun2.l.google.com";
+// const in_port_t stun_port = 19302;
+const char *stun_host = "stun.cloudflare.com";
+const in_port_t stun_port = 3478;
+
 int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
     int r;
     struct addrinfo hints = {
@@ -52,7 +57,7 @@ int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
     };
 
     struct addrinfo *res;
-    r = getaddrinfo("stun.cloudflare.com", NULL, &hints, &res);
+    r = getaddrinfo(stun_host, NULL, &hints, &res);
     if (r) {
         return -1;
     }
@@ -76,7 +81,7 @@ int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
 
     struct sockaddr_in sin = {
         .sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr,
-        .sin_port = htons(3478),
+        .sin_port = htons(stun_port),
         .sin_family = AF_INET
     };
     r = sendto(udp_sock, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));

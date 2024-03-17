@@ -11,6 +11,7 @@
 #include "stun.h"
 #include "imap.h"
 #include "socket.h"
+#include "types.h"
 
 struct comm_socket {
     int udp_sock;
@@ -18,7 +19,7 @@ struct comm_socket {
     struct stun_addr peer_addr;
 };
 
-int create_comm_socket(struct comm_socket *out_socket, int server_port) {
+int create_comm_socket(struct comm_socket *out_socket, int server_port, bool use_localhost) {
     int r;
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_sock < 0) return -1;
@@ -33,7 +34,15 @@ int create_comm_socket(struct comm_socket *out_socket, int server_port) {
 
     r = bind(udp_sock, (const struct sockaddr *)&sin, sizeof(sin));
     if (r) return -1;
-    r = stun_get_external_addr(udp_sock, &out_socket->own_addr);
+    if (use_localhost) {
+        socklen_t len = sizeof(sin);
+        r = getsockname(udp_sock, (struct sockaddr *)&sin, &len);
+        if (r) return -1;
+        out_socket->own_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        out_socket->own_addr.sin_port = sin.sin_port;
+    } else {
+        r = stun_get_external_addr(udp_sock, &out_socket->own_addr);
+    }
 
     fprintf(stderr, "Own addr: %s:%d\n", inet_ntoa(out_socket->own_addr.sin_addr),
         ntohs(out_socket->own_addr.sin_port)
@@ -66,38 +75,75 @@ static const struct addr_xchg_ops tcp_xchg_ops =  {
     .close_session = tcp_close_session
 };
 
+enum xchg_mode {
+    XCHG_IMAP = 1, XCHG_TCP
+};
+
+enum op_mode {
+    OP_SHELL = 1
+};
+
 int main(int argc, char *argv[]) {
     int r;
     struct comm_socket comm_socket;
     enum mode mode = EMPTY;
     char *peer = NULL;
 
-    const struct addr_xchg_ops *xchg = &tcp_xchg_ops;
+    enum xchg_mode xchg_mode = 0;
+    enum op_mode op_mode = 0;
+    bool is_localhost = false;
+
+    const struct addr_xchg_ops *xchg = NULL;
 
     char *mode_arg = NULL;
-    int server_port = 0;
+    int port_override = 0;
 
     char c;
-    while ((c = getopt(argc, argv, ":c:s:i")) != (char)-1) {
+    while ((c = getopt(argc, argv, ":c:s:it:SL")) != (char)-1) {
         switch (c) {
             case 'c':
                 mode = CLIENT;
-                mode_arg = optarg;
+                port_override = atoi(optarg);
                 break;
             case 's':
                 mode = SERVER;
-                server_port = atoi(optarg);
+                port_override = atoi(optarg);
                 break;
             case 'i':
-                xchg = &imap_xchg_ops;
+                xchg_mode = XCHG_IMAP;
                 break;
             case ':':
-                if (optopt == 'c') {
-                    mode = CLIENT;
-                } else if (optopt == 's') {
-                    mode = SERVER;
+                switch (optopt) {
+                    case 'c': mode = CLIENT; break;
+                    case 's': mode = SERVER; break;
+                    case 't': xchg_mode = XCHG_TCP; break;
                 }
                 break;
+            case 't':
+                xchg_mode = XCHG_TCP;
+                mode_arg = optarg;
+                break;
+            case 'S':
+                op_mode = OP_SHELL;
+                break;
+            case 'L':
+                fprintf(stderr, "Using localhost\n");
+                is_localhost = true;
+                break;
+        }
+    }
+
+    switch (xchg_mode) {
+        case XCHG_IMAP: xchg = &imap_xchg_ops; break;
+        case XCHG_TCP: xchg = &tcp_xchg_ops; break;
+        default: errx(1, "No address exchange option given [it]");
+    }
+
+    if (mode == CLIENT && xchg_mode == XCHG_TCP && mode_arg == NULL) {
+        if (is_localhost) {
+            mode_arg = "127.0.0.1";
+        } else {
+            errx(1, "TCP client requires server address argument");
         }
     }
 
@@ -108,7 +154,7 @@ int main(int argc, char *argv[]) {
     void *session;
     r = xchg->create_session(&session, mode, mode_arg);
     if (r < 0) {
-        errx(1, "create session");
+        errx(1, "error creating session");
     }
 
     if (mode == SERVER) {
@@ -117,12 +163,12 @@ int main(int argc, char *argv[]) {
             errx(1, "server get message");
         }
 
-        r = create_comm_socket(&comm_socket, server_port);
+        r = create_comm_socket(&comm_socket, port_override, is_localhost);
         if (r < 0) err(1, "create socket");
 
         r = xchg->send_msg(session, &comm_socket.own_addr, sizeof(comm_socket.own_addr));
     } else {
-        r = create_comm_socket(&comm_socket, 0);
+        r = create_comm_socket(&comm_socket, port_override, is_localhost);
         if (r < 0) err(1, "create socket");
 
         r = xchg->send_msg(session, &comm_socket.own_addr, sizeof(comm_socket.own_addr));
