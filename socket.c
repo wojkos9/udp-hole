@@ -9,6 +9,7 @@
 
 #include "socket.h"
 #include "types.h"
+#include "log.h"
 
 
 int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
@@ -25,7 +26,7 @@ int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
             .sin_family = AF_INET
         };
 
-        fprintf(stderr, "Binding\n");
+        debug("Binding\n");
 
         r = bind(s, (struct sockaddr *)&sin, sizeof(sin));
         if (r < 0) {
@@ -45,12 +46,12 @@ int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
             .sin_family = AF_INET
         };
         if (mode_arg == NULL) {
-            fprintf(stderr, "Error. No server to connect to\n");
+            debug("Error. No server to connect to\n");
             return -1;
         }
         inet_aton(mode_arg, &sin.sin_addr);
 
-        fprintf(stderr, "Connecting\n");
+        debug("Connecting\n");
 
         r = connect(s, (struct sockaddr *)&sin, sizeof(sin));
         if (r < 0) {
@@ -58,10 +59,10 @@ int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
             return -1;
         }
 
-        fprintf(stderr, "Connected\n");
+        debug("Connected\n");
     }
     session->sockfd = s;
-    fprintf(stderr, "Session created %d\n", session->sockfd);
+    debug("Session created %d\n", session->sockfd);
     return 0;
 }
 
@@ -69,10 +70,10 @@ int tcp_wait_msg(void *_session, void *out_msg, int out_len) {
     struct tcp_session *session = _session;
     int r;
 
-    fprintf(stderr, "Waiting...\n");
+    debug("Waiting...\n");
 
     if (session->mode == SERVER) {
-        fprintf(stderr, "Listening\n");
+        debug("Listening\n");
 
         r = listen(session->sockfd, 1);
         if (r < 0) {
@@ -88,7 +89,7 @@ int tcp_wait_msg(void *_session, void *out_msg, int out_len) {
         close(session->sockfd);
         session->sockfd = r;
 
-        fprintf(stderr, "Connection received\n");
+        debug("Connection received\n");
     }
 
     r = read(session->sockfd, out_msg, out_len);
@@ -97,7 +98,7 @@ int tcp_wait_msg(void *_session, void *out_msg, int out_len) {
         return -1;
     }
 
-    fprintf(stderr, "Read %d bytes\n", r);
+    debug("Read %d bytes\n", r);
     return 0;
 }
 
@@ -107,7 +108,7 @@ int tcp_send_msg(void *_session, void *send_msg, int send_len) {
     r = write(session->sockfd, send_msg, send_len);
     if (r < 0) return -1;
 
-    fprintf(stderr, "Written %d bytes\n", r);
+    debug("Written %d bytes\n", r);
     return 0;
 }
 

@@ -10,6 +10,7 @@
 #include <fcntl.h>
 
 #include "stun.h"
+#include "log.h"
 
 struct stun_hdr {
     uint16_t mtyp;
@@ -85,18 +86,18 @@ int stun_get_external_addr(int udp_sock, struct stun_addr *out_addr) {
         .sin_family = AF_INET
     };
     r = sendto(udp_sock, &msg, sizeof(msg), 0, (const struct sockaddr *)&sin, sizeof(sin));
-    if (r < 0) err(1, "send");
-    puts("sent");
+    if (r < 0) err(1, "stun send");
+    debug("stun sent");
 
     struct stun_xor_addr_msg msg_resp;
     r = read(udp_sock, &msg_resp, sizeof(msg_resp));
-    if (r < 0) err(1, "read");
-    puts("read");
+    if (r < 0) err(1, "stun read");
+    debug("stun read");
 
     if (ntohs(msg_resp.attr.type) != 0x0020) {
         return 0;
     }
-    printf("%x\n", msg_resp.attr.ip_xor);
+    debug("%x\n", msg_resp.attr.ip_xor);
 
     out_addr->sin_port = msg_resp.attr.port_xor ^ htons(0x2112);
     out_addr->sin_addr.s_addr = msg_resp.attr.ip_xor ^ htonl(0x2112a442);

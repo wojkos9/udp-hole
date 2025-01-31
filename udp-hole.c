@@ -12,12 +12,15 @@
 #include "imap.h"
 #include "socket.h"
 #include "types.h"
+#include "log.h"
 
 struct comm_socket {
     int udp_sock;
     struct stun_addr own_addr;
     struct stun_addr peer_addr;
 };
+
+int VERBOSE = 0;
 
 int create_comm_socket(struct comm_socket *out_socket, int server_port, bool use_localhost) {
     int r;
@@ -44,7 +47,7 @@ int create_comm_socket(struct comm_socket *out_socket, int server_port, bool use
         r = stun_get_external_addr(udp_sock, &out_socket->own_addr);
     }
 
-    fprintf(stderr, "Own addr: %s:%d\n", inet_ntoa(out_socket->own_addr.sin_addr),
+    debug("Own addr: %s:%d\n", inet_ntoa(out_socket->own_addr.sin_addr),
         ntohs(out_socket->own_addr.sin_port)
     );
 
@@ -83,6 +86,19 @@ enum op_mode {
     OP_SHELL = 1
 };
 
+void show_help() {
+    printf(
+        "Usage: udp-hole {-c [port]|-s [port]} {-i|-t [address]} ...\n"
+        "Options:\n"
+        "  -c [port]\tact as client bound to port\n"
+        "  -s [port]\tact as server bound to port\n"
+        "  -i\t\texchange ports using IMAP\n"
+        "  -t [address]\texchange ports using TCP port 8000, in client mode connect to address\n"
+        "  -x\t\ton connection print peer's address:port and exit\n"
+        "  -h\t\tshow help\n"
+    );
+}
+
 int main(int argc, char *argv[]) {
     int r;
     struct comm_socket comm_socket;
@@ -92,6 +108,7 @@ int main(int argc, char *argv[]) {
     enum xchg_mode xchg_mode = 0;
     enum op_mode op_mode = 0;
     bool is_localhost = false;
+    bool print_and_exit = false;
 
     const struct addr_xchg_ops *xchg = NULL;
 
@@ -99,7 +116,7 @@ int main(int argc, char *argv[]) {
     int port_override = 0;
 
     char c;
-    while ((c = getopt(argc, argv, ":c:s:it:SL")) != (char)-1) {
+    while ((c = getopt(argc, argv, ":c:s:it:SLxvh")) != (char)-1) {
         switch (c) {
             case 'c':
                 mode = CLIENT;
@@ -127,9 +144,18 @@ int main(int argc, char *argv[]) {
                 op_mode = OP_SHELL;
                 break;
             case 'L':
-                fprintf(stderr, "Using localhost\n");
+                debug("Using localhost\n");
                 is_localhost = true;
                 break;
+            case 'x':
+                print_and_exit = true;
+                break;
+            case 'v':
+                VERBOSE = 1;
+                break;
+            case 'h':
+                show_help();
+                exit(0);
         }
     }
 
@@ -179,12 +205,12 @@ int main(int argc, char *argv[]) {
     }
     xchg->close_session(session);
 
-    printf("Connection: %s:%d",
+    debug("Connection: %s:%d",
         inet_ntoa(comm_socket.own_addr.sin_addr),
         ntohs(comm_socket.own_addr.sin_port)
     );
 
-    printf(" <-> %s:%d\n",
+    debug(" <-> %s:%d\n",
         inet_ntoa(comm_socket.peer_addr.sin_addr),
         ntohs(comm_socket.peer_addr.sin_port)
     );
@@ -201,23 +227,31 @@ int main(int argc, char *argv[]) {
         .sin_family = AF_INET
     };
 
-    fprintf(stderr, "Connecting sockfd %d\n", comm_socket.udp_sock);
+    debug("Connecting sockfd %d\n", comm_socket.udp_sock);
 
     r = connect(comm_socket.udp_sock, (struct sockaddr *)&peer_sin, sizeof(peer_sin));
     if (r < 0) err(1, "connect");
 
-    fprintf(stderr, "connected\n");
+    debug("connected\n");
+
+    if (print_and_exit) {
+        printf("%s:%d\n",
+            inet_ntoa(comm_socket.peer_addr.sin_addr),
+            ntohs(comm_socket.peer_addr.sin_port)
+        );
+        exit(0);
+    }
 
     int msgid = 1;
     while(1) {
         char buf[64];
-        fprintf(stderr, "Write %d <-> %d\n", ntohs(comm_socket.own_addr.sin_port), ntohs(comm_socket.peer_addr.sin_port));
+        debug("Write %d <-> %d\n", ntohs(comm_socket.own_addr.sin_port), ntohs(comm_socket.peer_addr.sin_port));
         r = snprintf(buf, sizeof(buf), "%s msg %d\n", mode == SERVER ? "server" : "client", msgid);
         ++msgid;
         write(comm_socket.udp_sock, buf, r);
         r = recv(comm_socket.udp_sock, buf, sizeof(buf), MSG_DONTWAIT);
         if (r > 0) {
-            write(1, buf, r);
+            write(STDERR_FILENO, buf, r);
         }
         sleep(1);
     }

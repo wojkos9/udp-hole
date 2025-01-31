@@ -13,6 +13,7 @@
 #include "user_data.h"
 #include "imap.h"
 #include "b64.h"
+#include "log.h"
 
 #define TAG "a001"
 
@@ -47,16 +48,16 @@ void scan_subject(char *line, struct imap_session *data) {
         if (data->mode == SERVER && *line == 'c' || data->mode == CLIENT && *line == 's') {
             strtok(line, ":\r\n");
             char *msg_enc = strtok(NULL, ":\r\n");
-            printf("DATA: %s\n", msg_enc);
+            debug("DATA: %s\n", msg_enc);
             data->msg_len = b64decode(msg_enc, strlen(msg_enc), data->msg_buf, data->msg_buf_len);
         } else {
-            printf("ERR DATA START: %c\n", *line);
+            debug("ERR DATA START: %c\n", *line);
         }
     }
 }
 
 int imap_write_raw(struct imap_session *data, const char *raw_data, int n) {
-    fprintf(stderr, "C: %s", raw_data);
+    debug("C: %s", raw_data);
     return BIO_write(data->web, raw_data, n);
 }
 
@@ -86,7 +87,7 @@ enum result imap_read(struct imap_session *data, scanner scanner) {
     do {
         r = IMAP_get_line(data->web, line, sizeof(line));
         if (r > 0) {
-            fprintf(stderr, "S: %s", line);
+            debug("S: %s", line);
             if (scanner && data) {
                 scanner(line, data);
             }
