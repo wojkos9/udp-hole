@@ -26,17 +26,18 @@ int tcp_create_session(void **_session, enum mode mode, char *mode_arg) {
             .sin_family = AF_INET
         };
 
+        int on = 1;
+        r = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+        if (r < 0) {
+            perror("setopt reuseaddr");
+            return -1;
+        }
+
         debug("Binding\n");
 
         r = bind(s, (struct sockaddr *)&sin, sizeof(sin));
         if (r < 0) {
             perror("bind");
-            return -1;
-        }
-        int on = 1;
-        r = setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
-        if (r < 0) {
-            perror("setopt reuseaddr");
             return -1;
         }
     } else {
